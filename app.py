@@ -1,4 +1,5 @@
 import io
+import json
 import os
 import shutil
 from datetime import datetime
@@ -9,100 +10,45 @@ from PIL import Image
 from telebot import types
 
 from config.sec_config import TOKEN
-from config.creditials import SITE_LINK_UPLOAD_FILE, IMG_SAVING_DIR, SITE_LINK
-
-
-def user_exist(user_id, user_state):
-    return user_id in user_state and user_state[user_id]['token'] is not None
-
+import config.creditials as cfg
 
 bot = telebot.TeleBot(TOKEN)
-super_image_url = SITE_LINK_UPLOAD_FILE
-
-keyboard2 = types.ReplyKeyboardMarkup(True)
-keyboard2.row('/start_processing')
-
-keyboard3 = types.ReplyKeyboardMarkup(True)
-keyboard3.row('/login')
-
-keyboard4 = types.ReplyKeyboardMarkup(True)
-keyboard4.row('/start')
-
 user_state = {}
 
+login_reply = types.ReplyKeyboardMarkup(True)
+login_reply.row('/login')
 
-@bot.message_handler(content_types=['text'])
-def coefs_message(message):
-    user_id = message.from_user.id
-    if not user_exist(user_id, user_state):
-        smth_went_wrong(message.chat.id)
-    msg_text = message.text
-    if 'coefficient' in msg_text:
-        if msg_text.startswith('coefficient='):
-            if str(msg_text[-1]).isdigit() and int(msg_text[-1]) in [2, 4, 8]:
-                user_state[user_id]['coefficient'] = int(msg_text[-1])
-                if user_state[user_id]['image']:
-                    bot.send_message(
-                        message.chat.id,
-                        'Cool! We can improve image! Please select /start_processing',
-                        reply_markup=keyboard2
-                    )
-                else:
-                    bot.send_message(
-                        message.chat.id,
-                        'Cool! Now we need to get an image! Please upload it by image or document!',
-                        reply_markup=keyboard2
-                    )
-            else:
-                bot.send_message(
-                    message.chat.id,
-                    'Please select right coefficient: '
-                    'you can do it just wrote coefficient=2, coefficient=4 or coefficient=8',
-                    reply_markup=keyboard2
-                )
-    else:
-        bot.send_message(
-            message.chat.id,
-            'Please load right coefficient: you can do it just wrote coefficient=2, coefficient=4 or coefficient=8',
-            reply_markup=keyboard2
-        )
+start_processing_reply = types.ReplyKeyboardMarkup(True)
+start_processing_reply.row('/start_processing')
+
+start_reply = types.ReplyKeyboardMarkup(True)
+start_reply.row('/start')
+
+
+def user_exist(user_id):
+    return user_id in user_state and user_state[user_id]['token'] is not None
 
 
 @bot.message_handler(commands=['start'])
 def start_message(message):
     user_id = message.from_user.id
 
-    if user_exist(user_id, user_state):
+    if user_exist(user_id):
         user_state[user_id]['image'] = None
-        user_state[user_id]['coefficient'] = None
 
         bot.send_message(
             message.chat.id,
-            'We can start! Please load coefficient of improving image by '
-            '/coefficient=2 or /coefficient=4 or /coefficient=8 and upload an image by image or document!',
-            reply_markup=keyboard2
+            'Please load coefficient of improving image by wrote '
+            'coefficient=N where N in [2, 4, 8] and upload an image by image or document!',
+            reply_markup=start_processing_reply
         )
     else:
         bot.send_message(
             message.chat.id,
             'Hello! This is Super Image Bot, it helps you to get high resolution image from low resolution, enjoy! '
-            f'Before we start, you need to registrate in {SITE_LINK}. Thanks!',
-            reply_markup=keyboard3
+            f'Before we start, you need to registrate in {cfg.MAIN_SITE_LINK}. Thanks!',
+            reply_markup=login_reply
         )
-
-
-def smth_went_wrong(chat_id, msg=None):
-    bot.send_message(chat_id, msg if msg else 'Something went wrong!, Please tap /start', reply_markup=keyboard4)
-
-
-@bot.message_handler(commands=['help'])
-def help_message(message):
-    help_message_str = f"""
-    This bot will help you to get SR images from LR.
-    To start you need to select /start, then select /login, login to the bot(or create an account on {SITE_LINK}, 
-    then text 'upload image', upload image by image or file and select 'Start processing...'
-    """
-    bot.send_message(message.chat.id, help_message_str, reply_markup=keyboard4)
 
 
 @bot.message_handler(commands=['login'])
@@ -112,34 +58,57 @@ def login_message(message):
     user_state[user_id] = {
         'id': user_id,
         'image': None,
-        'token': 1,
+        'token': None,
         'coefficient': None,
     }
-    # todo
-    # добавить загрузку coefficient и чтобы везде он проверялся
-    # получить токен по апи
-    bot.send_message(message.chat.id, 'Cool! We can start!', reply_markup=keyboard4)
+
+    bot.send_message(
+        message.chat.id,
+        'Please pass login and password like "email=qwerty123@qwe.ru password=123qwe"!',
+        reply_markup=login_reply
+    )
+
+
+def get_token(message, email, password):
+    user_id = message.from_user.id
+
+    with requests.post(
+            cfg.GET_TOKEN_SITE_LINK,
+            json={"email": email, 'password': password},
+    ) as response:
+        response_text = json.loads(response.text)
+        if response.status_code == 200:
+            bot.send_message(message.chat.id, 'Cool! We can start!', reply_markup=start_reply)
+            user_state[user_id]['token'] = response_text.get('token')
+        else:
+            bot.send_message(message.chat.id, f'Sorry but it failed! {response_text.get("msg")}', reply_markup=login_reply)
 
 
 @bot.message_handler(commands=['start_processing'])
-def check_message(message):
+def start_processing_message(message):
     user_id = message.from_user.id
 
-    if not user_exist(user_id, user_state):
-        smth_went_wrong(message.chat.id)
-    else:
+    if user_exist(user_id):
         if user_state[user_id]['image'] is None:
-            bot.send_message(message.chat.id, 'Please load image')
+            bot.send_message(
+                message.chat.id,
+                'Please upload an image by image or document!',
+                reply_markup=start_processing_reply
+            )
         elif user_state[user_id]['coefficient'] is None:
-            bot.send_message(message.chat.id, 'Please choose coefficient by /coefficient=2/4/8', reply_markup=keyboard2)
+            bot.send_message(
+                message.chat.id,
+                'Please load coefficient of improving image by wrote coefficient=N where N in [2, 4, 8]',
+                reply_markup=start_processing_reply
+            )
         else:
-            bot.send_message(message.chat.id, 'Please wait....', reply_markup=keyboard4)
+            bot.send_message(message.chat.id, 'Please wait....')
 
             image = user_state[user_id]['image']
             coefficient = user_state[user_id]['coefficient']
             token = user_state[user_id]['token']
-
-            image.save(os.path.join(IMG_SAVING_DIR, f"{user_id}_{datetime.now()}.png"))
+            file_name = f"{user_id}_{datetime.now()}.png"
+            image.save(os.path.join(cfg.IMG_SAVING_DIR, file_name))
 
             image_room_file = io.BytesIO()
             image.save(image_room_file, 'PNG')
@@ -149,29 +118,49 @@ def check_message(message):
             final_res_file = io.BytesIO()
 
             with requests.post(
-                    super_image_url,
-                    data={"coefficient": coefficient, 'token': token},
+                    cfg.SITE_LINK_UPLOAD_FILE,
+                    data={"coefficient": coefficient, },
+                    headers={'apiToken': token},
                     files={'image': ('image', image_room_file_request, Image.MIME[image.format])},
                     stream=True
             ) as response:
                 if response.status_code == 200:
-                    response.raw.decode_content = True
-                    shutil.copyfileobj(response.raw, final_res_file)
-                    final_res_image = Image.open(final_res_file)
-                    bot.send_photo(message.chat.id, final_res_image)
-
-                    bot.send_message(message.chat.id, 'Your room with replaced walls', reply_markup=keyboard4)
+                    txt = json.loads(response.text)
+                    if txt.get("success"):
+                        with requests.post(
+                            cfg.LOAD_IMAGE_SITE_LINK,
+                            data={"image": json.loads(response.text).get('msg')},
+                        ) as response2:
+                            response2.raw.decode_content = True
+                            shutil.copyfileobj(response2.raw, final_res_file)
+                            final_res_image = io.BytesIO(response2.content)
+                            final_res_image.name = f"{user_id}_{datetime.now()}.png"
+                            new_path = os.path.join(cfg.IMG_SAVING_DIR, f"{user_id}_{datetime.now()}.png")
+                            Image.open(io.BytesIO(response2.content)).save(new_path)
+                            bot.send_document(message.chat.id, final_res_image)
+                            bot.send_message(message.chat.id, 'Your Super Resolution Image! :)', reply_markup=start_reply)
+                    else:
+                        bot.send_message(
+                            message.chat.id,
+                            f"Got error in server, please try again later! {txt.get('msg')}",
+                            reply_markup=start_processing_reply
+                        )
                 else:
-                    smth_went_wrong(message.chat.id, "Got error in server, please try again later!")
+                    bot.send_message(
+                        message.chat.id,
+                        f"Got error in server, please try again later! {json.loads(response.text).get('msg')}",
+                        reply_markup=start_processing_reply
+                    )
+
+    else:
+        bot.send_message(message.chat.id, 'Please login to the system!', reply_markup=login_reply)
 
 
 @bot.message_handler(content_types=['document', 'photo'])
 def handle_image(message):
     user_id = message.from_user.id
 
-    if not user_exist(user_id, user_state):
-        smth_went_wrong(message.chat.id)
-    else:
+    if user_exist(user_id):
         if message.content_type == 'document':
             file_info = bot.get_file(message.document.file_id)
             downloaded_file = bot.download_file(file_info.file_path)
@@ -179,7 +168,7 @@ def handle_image(message):
             image = Image.open(image)
 
             user_state[user_id]['image'] = image
-            bot.send_message(message.chat.id, 'Image loaded!', reply_markup=keyboard2)
+            bot.send_message(message.chat.id, 'Image loaded!', reply_markup=start_processing_reply)
 
         elif message.content_type == 'photo':
             file_info = bot.get_file(message.photo[-1].file_id)
@@ -188,10 +177,61 @@ def handle_image(message):
             image = Image.open(image)
 
             user_state[user_id]['image'] = image
-            bot.send_message(message.chat.id, 'Image loaded!', reply_markup=keyboard2)
+            bot.send_message(message.chat.id, 'Image loaded!', reply_markup=start_processing_reply)
 
         else:
-            smth_went_wrong(message.chat.id)
+            bot.send_message(
+                message.chat.id,
+                "Something went wrong. Please try again later!",
+                reply_markup=start_reply
+            )
+
+    else:
+        bot.send_message(message.chat.id, "You need to login first!", reply_markup=login_reply)
+
+
+@bot.message_handler(content_types=['text'])
+def check_message(message):
+    user_id = message.from_user.id
+    msg = str(message.text).strip()
+
+    if user_id in user_state:
+        if msg.startswith("email"):
+            if 'password' in msg:
+                splitted = msg.split(' ')
+                if len(splitted) != 2 \
+                        or not splitted[0].startswith("email=") \
+                        or not splitted[1].startswith("password="):
+                    bot.send_message(
+                        message.chat.id,
+                        'Please send an password and email in right view. '
+                        'View of message is "email=qwerty123@qwe.ru password=123qwe"'
+                    )
+                else:
+                    login = splitted[0][len("email="):]
+                    password = splitted[1][len("password="):]
+                    get_token(message, login, password)
+            else:
+                bot.send_message(
+                    message.chat.id,
+                    'Please send an password too. view of message is "email=qwerty123@qwe.ru password=123qwe"'
+                )
+        elif msg.startswith("coefficient"):
+            if msg[-1].isdigit() and int(msg[-1]) in [2, 4, 8]:
+                user_state[user_id]['coefficient'] = int(msg[-1])
+                bot.send_message(
+                    message.chat.id,
+                    'Cool! Coefficient was loaded!'
+                )
+            else:
+                bot.send_message(
+                    message.chat.id,
+                    'Wrong view of the coefficient, please enter it like coefficient=N, N in [2,4,8]'
+                )
+        else:
+            pass
+    else:
+        bot.send_message(message.chat.id, 'Please login first!', reply_markup=login_reply)
 
 
 if __name__ == '__main__':
