@@ -71,17 +71,20 @@ def login_message(message):
 
 def get_token(message, email, password):
     user_id = message.from_user.id
+    try:
+        with requests.post(
+                cfg.GET_TOKEN_SITE_LINK,
+                json={"email": email, 'password': password},
+        ) as response:
+            response_text = json.loads(response.text)
+            if response.status_code == 200:
+                bot.send_message(message.chat.id, 'Cool! We can start!', reply_markup=start_reply)
+                user_state[user_id]['token'] = response_text.get('token')
+            else:
+                bot.send_message(message.chat.id, f'Sorry but it failed! {response_text.get("msg")}', reply_markup=login_reply)
+    except:
+        bot.send_message(message.chat.id, f'Sorry but it failed! Please try again later', reply_markup=login_reply)
 
-    with requests.post(
-            cfg.GET_TOKEN_SITE_LINK,
-            json={"email": email, 'password': password},
-    ) as response:
-        response_text = json.loads(response.text)
-        if response.status_code == 200:
-            bot.send_message(message.chat.id, 'Cool! We can start!', reply_markup=start_reply)
-            user_state[user_id]['token'] = response_text.get('token')
-        else:
-            bot.send_message(message.chat.id, f'Sorry but it failed! {response_text.get("msg")}', reply_markup=login_reply)
 
 
 @bot.message_handler(commands=['start_processing'])
@@ -116,42 +119,47 @@ def start_processing_message(message):
             image_room_file_request = image_room_file
 
             final_res_file = io.BytesIO()
-
-            with requests.post(
-                    cfg.SITE_LINK_UPLOAD_FILE,
-                    data={"coefficient": coefficient, },
-                    headers={'apiToken': token},
-                    files={'image': ('image', image_room_file_request, Image.MIME[image.format])},
-                    stream=True
-            ) as response:
-                if response.status_code == 200:
-                    txt = json.loads(response.text)
-                    if txt.get("success"):
-                        with requests.post(
-                            cfg.LOAD_IMAGE_SITE_LINK,
-                            data={"image": json.loads(response.text).get('msg')},
-                        ) as response2:
-                            response2.raw.decode_content = True
-                            shutil.copyfileobj(response2.raw, final_res_file)
-                            final_res_image = io.BytesIO(response2.content)
-                            final_res_image.name = f"{user_id}_{datetime.now()}.png"
-                            new_path = os.path.join(cfg.IMG_SAVING_DIR, f"{user_id}_{datetime.now()}.png")
-                            Image.open(io.BytesIO(response2.content)).save(new_path)
-                            bot.send_document(message.chat.id, final_res_image)
-                            bot.send_message(message.chat.id, 'Your Super Resolution Image! :)', reply_markup=start_reply)
+            try:
+                with requests.post(
+                        cfg.SITE_LINK_UPLOAD_FILE,
+                        data={"coefficient": coefficient, },
+                        headers={'apiToken': token},
+                        files={'image': ('image', image_room_file_request, Image.MIME[image.format])},
+                        stream=True
+                ) as response:
+                    if response.status_code == 200:
+                        txt = json.loads(response.text)
+                        if txt.get("success"):
+                            with requests.post(
+                                cfg.LOAD_IMAGE_SITE_LINK,
+                                data={"image": json.loads(response.text).get('msg')},
+                            ) as response2:
+                                response2.raw.decode_content = True
+                                shutil.copyfileobj(response2.raw, final_res_file)
+                                final_res_image = io.BytesIO(response2.content)
+                                final_res_image.name = f"{user_id}_{datetime.now()}.png"
+                                new_path = os.path.join(cfg.IMG_SAVING_DIR, f"{user_id}_{datetime.now()}.png")
+                                Image.open(io.BytesIO(response2.content)).save(new_path)
+                                bot.send_document(message.chat.id, final_res_image)
+                                bot.send_message(message.chat.id, 'Your Super Resolution Image! :)', reply_markup=start_reply)
+                        else:
+                            bot.send_message(
+                                message.chat.id,
+                                f"Got error in server, please try again later! {txt.get('msg')}",
+                                reply_markup=start_processing_reply
+                            )
                     else:
                         bot.send_message(
                             message.chat.id,
-                            f"Got error in server, please try again later! {txt.get('msg')}",
+                            f"Got error in server, please try again later! {json.loads(response.text).get('msg')}",
                             reply_markup=start_processing_reply
                         )
-                else:
-                    bot.send_message(
-                        message.chat.id,
-                        f"Got error in server, please try again later! {json.loads(response.text).get('msg')}",
-                        reply_markup=start_processing_reply
-                    )
-
+            except:
+                bot.send_message(
+                    message.chat.id,
+                    f"Got error in server, please try again later!",
+                    reply_markup=start_processing_reply
+                )
     else:
         bot.send_message(message.chat.id, 'Please login to the system!', reply_markup=login_reply)
 
@@ -235,4 +243,11 @@ def check_message(message):
 
 
 if __name__ == '__main__':
+    from time import sleep
+    print("Start to running BOT")
+    for i in range(3, 0, -1):
+        print(f"Bot will run after {i} seconds!")
+        sleep(1)
+    print("Let's go")
     bot.polling(none_stop=True)
+
